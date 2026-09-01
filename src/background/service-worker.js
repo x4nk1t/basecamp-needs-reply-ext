@@ -100,7 +100,7 @@ async function ignoreItem(message) {
   }
 
   const ignoredRecords = await getIgnoredRecords();
-  const record = BasecampNeedsReplyEngine.makeIgnoreRecord(message.item, message.action || "ignore");
+  const record = BasecampNeedsReplyEngine.makeIgnoreRecord(message.item);
   ignoredRecords[record.threadId] = record;
 
   const cached = await getCachedResult();
@@ -157,7 +157,7 @@ function decorateItem(item, ignoredRecords) {
   return {
     ...item,
     hiddenState: {
-      action: ignored.action || "ignore",
+      action: "ignore",
       ignoredAt: ignored.ignoredAt
     }
   };

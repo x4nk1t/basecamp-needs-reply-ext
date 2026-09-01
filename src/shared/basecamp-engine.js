@@ -429,9 +429,9 @@
     return Array.from(byThread.values());
   }
 
-  function makeIgnoreRecord(item, action) {
+  function makeIgnoreRecord(item) {
     return {
-      action: action || "ignore",
+      action: "ignore",
       threadId: item.threadId,
       threadTitle: item.threadTitle,
       mentionCommentId: item.mentionCommentId,

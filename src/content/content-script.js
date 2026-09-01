@@ -350,7 +350,7 @@
     if (item.hiddenState) {
       const badge = document.createElement("span");
       badge.className = "bnr-hidden-badge";
-      badge.textContent = item.hiddenState.action === "read" ? "Marked read locally" : "Ignored";
+      badge.textContent = "Ignored";
       meta.append(" · ", badge);
     }
 
@@ -381,31 +381,23 @@
     ignore.type = "button";
     ignore.className = "bnr-item__secondary";
     ignore.textContent = "Ignore";
-    ignore.addEventListener("click", () => hideItem(item, "ignore"));
-
-    const read = document.createElement("button");
-    read.type = "button";
-    read.className = "bnr-item__secondary";
-    read.textContent = "Mark as read";
-    read.title = "Hide locally until this Basecamp thread is updated again.";
-    read.addEventListener("click", () => hideItem(item, "read"));
+    ignore.addEventListener("click", () => hideItem(item));
 
     if (item.hiddenState) {
       ignore.disabled = true;
-      read.disabled = true;
     }
 
-    actions.append(open, ignore, read);
+    actions.append(open, ignore);
     article.append(meta, title, sender, excerpt, actions);
     return article;
   }
 
-  async function hideItem(item, action) {
+  async function hideItem(item) {
     state.items = state.items.filter((candidate) => candidate.threadId !== item.threadId);
     updateBadge();
     renderPanel();
 
-    const response = await sendMessage({ type: "BNR_IGNORE_ITEM", item, action, showAll: state.showAll });
+    const response = await sendMessage({ type: "BNR_IGNORE_ITEM", item, showAll: state.showAll });
     if (response && response.ok && response.result) {
       state.items = response.result.items || [];
       state.meta = response.result.meta || state.meta;
