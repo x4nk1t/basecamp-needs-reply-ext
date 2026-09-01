@@ -189,7 +189,7 @@
     }
 
     if (!panel) {
-        panel = document.createElement("section");
+      panel = document.createElement("section");
       panel.id = PANEL_ID;
       panel.className = "bnr-panel";
       panel.setAttribute("aria-label", "Needs Reply panel");
@@ -217,47 +217,48 @@
   }
 
   function renderHeader() {
-    const wrap = document.createElement("div");
+    const header = document.createElement("header");
+    header.className = "perma-header bnr-panel__header";
 
-    const toolbar = document.createElement("div");
-    toolbar.className = "perma-toolbar bnr-toolbar";
+    const topRow = document.createElement("div");
+    topRow.className = "bnr-panel__top-row";
+
+    const title = document.createElement("h1");
+    title.className = "perma-header__title";
+    title.textContent = "Needs Reply";
+
     const actions = document.createElement("div");
-    actions.className = "perma-toolbar__actions bnr-panel__actions";
+    actions.className = "bnr-panel__actions";
 
     const refresh = document.createElement("button");
     refresh.type = "button";
-    refresh.className = "perma-toolbar__btn btn btn--sm btn--ghost bnr-icon-button";
-    refresh.textContent = state.isLoading ? "Checking…" : "Refresh";
+    refresh.className = "btn btn--sm btn--ghost bnr-toolbar-button bnr-refresh";
     refresh.disabled = state.isLoading;
+    refresh.append(
+      createSvgIcon("M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.76-4.24L13 11h8V3l-3.3 3.3Z"),
+      document.createTextNode(state.isLoading ? "Checking…" : "Refresh")
+    );
     refresh.addEventListener("click", () => refreshItems());
 
     const close = document.createElement("button");
     close.type = "button";
-    close.className = "tray__close btn btn--sm btn--icon btn--ghost app-mobile__hide bnr-close";
+    close.className = "btn btn--sm btn--icon btn--ghost bnr-toolbar-button bnr-close";
     close.setAttribute("aria-label", "Close Needs Reply");
-    close.textContent = "×";
+    close.appendChild(createSvgIcon("M18.3 5.71 12 12l6.3 6.29-1.41 1.41L10.59 13.41 4.29 19.7 2.88 18.29 9.17 12 2.88 5.71 4.29 4.3l6.3 6.29 6.3-6.29 1.41 1.41Z"));
     close.addEventListener("click", () => {
       state.isOpen = false;
       renderPanel();
     });
 
     actions.append(refresh, close);
-    toolbar.appendChild(actions);
-
-    const header = document.createElement("header");
-    header.className = "perma-header bnr-panel__header";
-
-    const title = document.createElement("h1");
-    title.className = "perma-header__title";
-    title.textContent = "Needs Reply";
+    topRow.append(title, actions);
 
     const content = document.createElement("div");
     content.className = "perma-header__content";
     content.appendChild(renderFilterNav());
 
-    header.append(title, content);
-    wrap.append(toolbar, header);
-    return wrap;
+    header.append(topRow, content);
+    return header;
   }
 
   function renderFilterNav() {
@@ -291,6 +292,19 @@
     if (state.showAll === showAll) return;
     state.showAll = showAll;
     await getOrRefreshItems();
+  }
+
+  function createSvgIcon(pathData) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "svg-icon bnr-toolbar-icon");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("fill", "currentColor");
+    path.setAttribute("d", pathData);
+    svg.appendChild(path);
+    return svg;
   }
 
   function renderFooter() {
