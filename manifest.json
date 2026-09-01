@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Basecamp Needs Reply",
+  "version": "0.1.0",
+  "description": "Adds a read-only Needs Reply view to Basecamp for unresolved comment mentions.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://app.basecamp.com/*",
+    "https://3.basecamp.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://app.basecamp.com/*",
+        "https://3.basecamp.com/*"
+      ],
+      "js": [
+        "src/shared/basecamp-engine.js",
+        "src/content/content-script.js"
+      ],
+      "css": ["src/content/content-style.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "src/options/options.html",
+  "action": {
+    "default_title": "Basecamp Needs Reply"
+  }
+}

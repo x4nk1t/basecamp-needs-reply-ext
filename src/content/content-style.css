@@ -1,0 +1,334 @@
+#bnr-root {
+  /* Prefer Basecamp's own theme variables so the panel follows the active Basecamp theme. */
+  --bnr-bg: var(--color-canvas-light, var(--color-page-tint, #fffdf7));
+  --bnr-surface: var(--color-canvas, #fff);
+  --bnr-surface-muted: var(--color-body, #fbfaf5);
+  --bnr-text: var(--color-text, #1f2a1f);
+  --bnr-text-strong: var(--color-ink, var(--color-text, #182216));
+  --bnr-text-muted: var(--color-text-subtle, var(--color-uncolor, #6f746b));
+  --bnr-border: color-mix(in srgb, var(--color-uncolor, #000) 28%, transparent);
+  --bnr-border-soft: color-mix(in srgb, var(--color-uncolor, #000) 18%, transparent);
+  --bnr-shadow: rgba(0, 0, 0, 0.28);
+  --bnr-green: var(--color-green, #2f7d32);
+  --bnr-danger: var(--color-red, #d93d2e);
+  --bnr-warning: var(--color-orange, #8a5b19);
+  color-scheme: light dark;
+  font-family: inherit;
+}
+
+.bnr-tray-tab {
+  display: inline-flex;
+  align-items: center;
+}
+
+.bnr-button {
+  position: relative;
+  gap: 6px;
+}
+
+.bnr-button__label {
+  white-space: nowrap;
+}
+
+.bnr-button__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  /* Keep the count badge intentionally red; Basecamp theme vars can make it too muted. */
+  background: #d93d2e;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.bnr-fallback {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483000;
+  border: 1px solid var(--bnr-border);
+  border-radius: 999px;
+  background: var(--bnr-surface);
+  color: var(--bnr-text);
+  box-shadow: 0 8px 24px var(--bnr-border);
+  padding: 9px 13px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.bnr-panel {
+  position: fixed;
+  left: 18px;
+  bottom: 58px;
+  z-index: 2147483001;
+  width: min(560px, calc(100vw - 36px));
+  max-height: min(760px, calc(100vh - 88px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--bnr-border);
+  border-radius: 18px 18px 0 0;
+  background: var(--bnr-bg);
+  color: var(--bnr-text);
+  box-shadow: 0 18px 48px var(--bnr-shadow);
+}
+
+.bnr-toolbar {
+  flex: 0 0 auto;
+  padding: 10px 12px 0;
+}
+
+.bnr-panel__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.bnr-panel .btn,
+.bnr-icon-button,
+.bnr-close {
+  background: var(--bnr-surface);
+  color: var(--bnr-text);
+  border-color: var(--bnr-border);
+  font: inherit;
+}
+
+.bnr-panel .btn:hover,
+.bnr-icon-button:hover,
+.bnr-close:hover {
+  background: var(--bnr-surface-muted);
+}
+
+.bnr-icon-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.bnr-close {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.bnr-panel__header {
+  flex: 0 0 auto;
+  display: block;
+  padding: 8px 22px 14px;
+  border-bottom: 1px solid var(--bnr-border-soft);
+}
+
+.bnr-panel__header .perma-header__title,
+.bnr-panel__header h1 {
+  margin: 0 0 12px;
+  color: inherit;
+  font-size: 30px;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.bnr-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.bnr-filter .button-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.bnr-filter .button-group__btn {
+  background: var(--bnr-surface);
+  color: var(--bnr-text);
+  border-color: var(--bnr-border);
+  cursor: pointer;
+}
+
+.bnr-filter .button-group__btn.active {
+  background: color-mix(in srgb, var(--bnr-green) 18%, var(--bnr-surface));
+  color: var(--bnr-text-strong);
+}
+
+.bnr-panel__body {
+  overflow: auto;
+  padding: 14px 18px 16px;
+}
+
+.bnr-list {
+  display: grid;
+  gap: 14px;
+}
+
+.bnr-item {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 4px 10px;
+  padding: 2px 0 14px;
+  border-bottom: 1px solid var(--bnr-border-soft);
+  background: transparent;
+}
+
+.bnr-item::before {
+  content: "";
+  grid-row: 1 / span 5;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  border-radius: 50%;
+  border: 2px solid var(--bnr-green);
+  background: var(--bnr-bg);
+  box-sizing: border-box;
+}
+
+.bnr-item--hidden {
+  opacity: 0.62;
+}
+
+.bnr-item--hidden::before {
+  border-color: var(--bnr-text-muted);
+  background: var(--bnr-surface-muted);
+}
+
+.bnr-item__meta,
+.bnr-item__sender,
+.bnr-panel__footer {
+  color: var(--bnr-text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.bnr-hidden-badge {
+  color: var(--bnr-warning);
+  font-weight: 700;
+}
+
+.bnr-item__title {
+  color: var(--bnr-text);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-decoration: none;
+}
+
+.bnr-item__title:hover,
+.bnr-item__open:hover {
+  text-decoration: underline;
+}
+
+.bnr-item__sender,
+.bnr-item__excerpt {
+  margin: 0;
+}
+
+.bnr-item__excerpt {
+  color: var(--bnr-text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.bnr-item__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 4px;
+}
+
+.bnr-item__open,
+.bnr-item__secondary {
+  width: max-content;
+  border: 1px solid var(--bnr-border);
+  border-radius: 999px;
+  background: var(--bnr-surface);
+  color: var(--bnr-text);
+  padding: 5px 9px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.bnr-item__secondary {
+  color: var(--bnr-text-muted);
+  background: var(--bnr-surface-muted);
+}
+
+.bnr-item__secondary:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.bnr-message {
+  margin: 8px 0;
+  padding: 28px 18px;
+  border: 1px dashed var(--bnr-border);
+  border-radius: 14px;
+  text-align: center;
+  color: var(--bnr-text);
+}
+
+.bnr-message strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--bnr-text-strong);
+  font-size: 16px;
+}
+
+.bnr-message p {
+  margin: 0;
+  color: var(--bnr-text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.bnr-message small {
+  display: block;
+  margin-top: 10px;
+  color: #8a463f;
+  overflow-wrap: anywhere;
+}
+
+.bnr-message--error {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--bnr-danger) 35%, transparent);
+  background: color-mix(in srgb, var(--bnr-danger) 8%, var(--bnr-bg));
+}
+
+.bnr-panel__footer {
+  flex: 0 0 auto;
+  padding: 10px 22px 14px;
+  border-top: 1px solid var(--bnr-border-soft);
+}
+
+@media (max-width: 680px) {
+  .bnr-panel {
+    left: 10px;
+    right: 10px;
+    bottom: 52px;
+    width: auto;
+    max-height: calc(100vh - 70px);
+    border-radius: 16px 16px 0 0;
+  }
+
+  .bnr-panel__header {
+    padding-inline: 16px;
+  }
+
+  .bnr-panel__body {
+    padding-inline: 14px;
+  }
+
+  .bnr-button__label {
+    max-width: 92px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

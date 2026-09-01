@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Basecamp Needs Reply Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="settings">
+    <header>
+      <p class="eyebrow">Basecamp extension</p>
+      <h1>Needs Reply Settings</h1>
+      <p>Configure the account and person used to detect unresolved comment mentions.</p>
+    </header>
+
+    <form id="settings-form" class="card">
+      <label>
+        <span>Fallback account ID (optional)</span>
+        <input id="accountId" name="accountId" inputmode="numeric" placeholder="Auto-detected from Basecamp URL">
+      </label>
+
+      <label>
+        <span>Fallback Basecamp person ID (optional)</span>
+        <input id="personId" name="personId" inputmode="numeric" placeholder="Auto-detected from logged-in user">
+      </label>
+
+      <label>
+        <span>Time window, days</span>
+        <input id="daysBack" name="daysBack" type="number" min="1" max="30" required>
+      </label>
+
+      <label>
+        <span>Read notification pages to scan</span>
+        <input id="maxReadPages" name="maxReadPages" type="number" min="1" max="10" required>
+      </label>
+
+      <label>
+        <span>Preferred Basecamp host</span>
+        <select id="origin" name="origin">
+          <option value="https://app.basecamp.com">app.basecamp.com</option>
+          <option value="https://3.basecamp.com">3.basecamp.com</option>
+        </select>
+      </label>
+
+      <button type="submit">Save settings</button>
+      <p id="status" role="status"></p>
+    </form>
+  </main>
+
+  <script src="../shared/basecamp-engine.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

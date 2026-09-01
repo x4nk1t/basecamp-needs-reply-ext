@@ -1,0 +1,30 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Local/private artifacts
+.env
+.env.*
+*.local
+screenshots/
+recordings/
+/private/
+
+# Browser/profile data — never commit cookies/session data
+Cookies
+Safe Browsing Cookies
+Extension Cookies
+Local State
+Default/
+Profile */
+User Data/
+
+# Logs/build artifacts
+*.log
+dist/
+build/
+*.zip
