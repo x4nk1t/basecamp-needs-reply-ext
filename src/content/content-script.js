@@ -327,6 +327,12 @@
     const meta = document.createElement("div");
     meta.className = "bnr-item__meta";
     meta.textContent = `${item.projectName || "Basecamp"} · ${formatDate(item.mentionedAt)}`;
+    if (item.sourceType === "recording_mention") {
+      const source = document.createElement("span");
+      source.className = "bnr-source-badge";
+      source.textContent = "Description mention";
+      meta.append(" · ", source);
+    }
     if (item.hiddenState) {
       const badge = document.createElement("span");
       badge.className = "bnr-hidden-badge";

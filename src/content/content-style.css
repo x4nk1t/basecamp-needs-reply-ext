@@ -205,9 +205,17 @@
   line-height: 1.35;
 }
 
+.bnr-hidden-badge,
+.bnr-source-badge {
+  font-weight: 700;
+}
+
 .bnr-hidden-badge {
   color: var(--bnr-warning);
-  font-weight: 700;
+}
+
+.bnr-source-badge {
+  color: var(--bnr-green);
 }
 
 .bnr-item__title {

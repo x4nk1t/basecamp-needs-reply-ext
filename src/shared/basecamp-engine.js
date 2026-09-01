@@ -52,6 +52,8 @@
       const numericParts = parts.filter((part) => /^\d+$/.test(part));
       const parentRecordingId = numericParts[numericParts.length - 1] || "";
 
+      const isSupportedRecordingPath = /\/(card_tables\/cards|todos|messages|documents)\/\d+/.test(parsed.pathname);
+
       return {
         accountId,
         bucketId,
@@ -59,7 +61,8 @@
         focusCommentId: commentMatch ? commentMatch[1] : "",
         origin: parsed.origin,
         path: parsed.pathname,
-        isCommentMention: Boolean(commentMatch && accountId && parentRecordingId)
+        isCommentMention: Boolean(commentMatch && accountId && parentRecordingId),
+        isRecordingMention: Boolean(!commentMatch && accountId && parentRecordingId && isSupportedRecordingPath)
       };
     } catch (_error) {
       return {
@@ -69,7 +72,8 @@
         focusCommentId: "",
         origin: "",
         path: "",
-        isCommentMention: false
+        isCommentMention: false,
+        isRecordingMention: false
       };
     }
   }
@@ -236,7 +240,7 @@
       .filter((notification) => String(notification.creator && notification.creator.id) !== currentPersonId)
       .filter((notification) => isRecent(notification.created_at, cutoff))
       .map((notification) => ({ notification, parsed: parseBasecampAppUrl(notification.app_url) }))
-      .filter(({ parsed }) => parsed.isCommentMention);
+      .filter(({ parsed }) => parsed.isCommentMention || parsed.isRecordingMention);
 
     const unresolved = [];
     const errors = [];
@@ -275,6 +279,13 @@
   }
 
   async function inspectMention(candidate, settings, fetchImpl) {
+    if (candidate.parsed.isCommentMention) {
+      return inspectCommentMention(candidate, settings, fetchImpl);
+    }
+    return inspectRecordingMention(candidate, settings, fetchImpl);
+  }
+
+  async function inspectCommentMention(candidate, settings, fetchImpl) {
     const { notification, parsed } = candidate;
     const accountId = parsed.accountId || settings.accountId;
     const origin = settings.origin;
@@ -296,19 +307,9 @@
       created_at: focusComment.created_at || notification.created_at
     };
 
-    const laterReply = Array.isArray(threadComments) && threadComments.some((comment) => {
-      return String(comment && comment.creator && comment.creator.id) === settings.personId && isAfterComment(comment, focus);
-    });
+    if (hasLaterCurrentUserReply(threadComments, focus, settings.personId)) return null;
 
-    if (laterReply) return null;
-
-    const latestThreadComment = Array.isArray(threadComments)
-      ? threadComments.reduce((latest, comment) => {
-        if (!latest) return comment;
-        return compareRecordingTime(comment.created_at, comment.id, latest.created_at, latest.id) > 0 ? comment : latest;
-      }, null)
-      : null;
-
+    const latestActivity = latestThreadActivity(threadComments, focus);
     const sender = focusComment.creator || notification.creator || {};
     const project = focusComment.bucket || {};
     const parent = focusComment.parent || {};
@@ -323,18 +324,96 @@
       threadType: parent.type || "Recording",
       threadTitle: cleanTitle(notification.title, parent.title),
       mentionCommentId: String(focus.id),
-      latestThreadCommentId: String((latestThreadComment && latestThreadComment.id) || focus.id),
-      latestThreadCommentAt: (latestThreadComment && latestThreadComment.created_at) || focus.created_at,
+      latestThreadCommentId: String(latestActivity.id || focus.id),
+      latestThreadCommentAt: latestActivity.created_at || focus.created_at,
       mentionUrl: notification.app_url,
       parentUrl: parent.app_url || notification.app_url.split("#")[0],
-      sender: {
-        id: String(sender.id || ""),
-        name: sender.name || "Someone",
-        avatarUrl: sender.avatar_url || sender.avatarUrl || ""
-      },
+      sender: normalizeSender(sender),
       mentionedAt: focus.created_at,
       excerpt,
       sourceType: "comment_mention"
+    };
+  }
+
+  async function inspectRecordingMention(candidate, settings, fetchImpl) {
+    const { notification, parsed } = candidate;
+    const accountId = parsed.accountId || settings.accountId;
+    const origin = settings.origin;
+    const parentRecordingId = String(parsed.parentRecordingId || "");
+    if (!parentRecordingId) return null;
+
+    const recording = await fetchJson(makeRecordingUrl(origin, parsed), fetchImpl);
+    const threadComments = await fetchJson(
+      makeUrl(origin, accountId, `/recordings/${parentRecordingId}/comments.json`),
+      fetchImpl
+    );
+
+    const focus = {
+      id: notification.id || recording.id || parentRecordingId,
+      created_at: notification.created_at || recording.created_at || recording.updated_at
+    };
+
+    if (hasLaterCurrentUserReply(threadComments, focus, settings.personId)) return null;
+
+    const latestActivity = latestThreadActivity(threadComments, {
+      id: recording.id || focus.id,
+      created_at: recording.updated_at || recording.created_at || focus.created_at
+    });
+    const sender = notification.creator || recording.creator || {};
+    const project = recording.bucket || {};
+    const excerptSource = recording.content || recording.description || recording.body || notification.content_excerpt || "";
+
+    return {
+      id: `${parentRecordingId}:${focus.id}`,
+      accountId,
+      projectId: String(project.id || parsed.bucketId || ""),
+      projectName: project.name || notification.bucket_name || "Basecamp project",
+      threadId: parentRecordingId,
+      threadType: recording.type || "Recording",
+      threadTitle: cleanTitle(notification.title, recording.title || recording.content),
+      mentionCommentId: String(focus.id),
+      latestThreadCommentId: String(latestActivity.id || focus.id),
+      latestThreadCommentAt: latestActivity.created_at || focus.created_at,
+      mentionUrl: notification.app_url,
+      parentUrl: recording.app_url || notification.app_url.split("#")[0],
+      sender: normalizeSender(sender),
+      mentionedAt: focus.created_at,
+      excerpt: truncate(htmlToText(excerptSource), 240),
+      sourceType: "recording_mention"
+    };
+  }
+
+  function makeRecordingUrl(origin, parsed) {
+    const path = parsed.path.endsWith(".json") ? parsed.path : `${parsed.path}.json`;
+    return `${normalizeOrigin(origin)}${path}`;
+  }
+
+  function hasLaterCurrentUserReply(threadComments, focus, personId) {
+    return Array.isArray(threadComments) && threadComments.some((comment) => {
+      return String(comment && comment.creator && comment.creator.id) === String(personId) && isAfterComment(comment, focus);
+    });
+  }
+
+  function latestThreadActivity(threadComments, fallback) {
+    const latestComment = Array.isArray(threadComments)
+      ? threadComments.reduce((latest, comment) => {
+        if (!latest) return comment;
+        return compareRecordingTime(comment.created_at, comment.id, latest.created_at, latest.id) > 0 ? comment : latest;
+      }, null)
+      : null;
+
+    if (!latestComment) return fallback || {};
+    if (!fallback) return latestComment;
+    return compareRecordingTime(latestComment.created_at, latestComment.id, fallback.created_at, fallback.id) > 0
+      ? latestComment
+      : fallback;
+  }
+
+  function normalizeSender(sender) {
+    return {
+      id: String(sender.id || ""),
+      name: sender.name || "Someone",
+      avatarUrl: sender.avatar_url || sender.avatarUrl || ""
     };
   }
 
