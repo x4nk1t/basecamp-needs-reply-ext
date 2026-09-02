@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Basecamp Needs Reply",
   "version": "0.1.0",
-  "description": "Adds a read-only Needs Reply view to Basecamp for unresolved comment mentions.",
+  "description": "Adds a read-only Needs Reply view to Basecamp for unresolved mentions and assignments.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://app.basecamp.com/*",

@@ -3,6 +3,7 @@ importScripts("/src/shared/basecamp-engine.js");
 const STORAGE_KEY = "basecampNeedsReplySettings";
 const CACHE_KEY = "basecampNeedsReplyLastResult";
 const IGNORED_KEY = "basecampNeedsReplyIgnored";
+const CACHE_SCHEMA_VERSION = 3;
 const CACHE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -58,6 +59,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "BNR_UNIGNORE_ITEM") {
+    unignoreItem(message)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse(errorResponse(error)));
+    return true;
+  }
+
   return false;
 });
 
@@ -85,6 +93,7 @@ async function refreshNeedsReply(message, sender) {
     items: filtered.visible,
     meta: {
       ...rawResult.meta,
+      cacheSchemaVersion: CACHE_SCHEMA_VERSION,
       ignoredCount: Object.keys(ignoredRecords).length,
       staleIgnoreKeys: filtered.staleIgnoreKeys
     }
@@ -122,6 +131,37 @@ async function ignoreItem(message) {
     ok: true,
     result: updatedCache ? buildDisplayResult(updatedCache, ignoredRecords, Boolean(message.showAll), true) : null,
     ignored: record
+  };
+}
+
+async function unignoreItem(message) {
+  const threadId = String((message.item && message.item.threadId) || message.threadId || "");
+  if (!threadId) {
+    throw new Error("Cannot unignore item without a thread ID.");
+  }
+
+  const ignoredRecords = await getIgnoredRecords();
+  delete ignoredRecords[threadId];
+
+  const cached = await getCachedResult();
+  const updatedCache = cached
+    ? {
+      ...cached,
+      rawItems: cached.rawItems || cached.items || [],
+      items: BasecampNeedsReplyEngine.filterIgnoredItems(cached.rawItems || cached.items || [], ignoredRecords).visible,
+      meta: {
+        ...(cached.meta || {}),
+        ignoredCount: Object.keys(ignoredRecords).length,
+        lastLocalActionAt: new Date().toISOString()
+      }
+    }
+    : null;
+
+  await chrome.storage.local.set({ [IGNORED_KEY]: ignoredRecords, [CACHE_KEY]: updatedCache });
+  return {
+    ok: true,
+    result: updatedCache ? buildDisplayResult(updatedCache, ignoredRecords, Boolean(message.showAll), true) : null,
+    unignoredThreadId: threadId
   };
 }
 
@@ -169,6 +209,7 @@ async function getIgnoredRecords() {
 }
 
 function isCacheExpired(result) {
+  if (!result || !result.meta || result.meta.cacheSchemaVersion !== CACHE_SCHEMA_VERSION) return true;
   const checkedAt = result && result.meta && result.meta.checkedAt;
   const time = checkedAt ? new Date(checkedAt).getTime() : 0;
   if (!Number.isFinite(time) || !time) return true;

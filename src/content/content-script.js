@@ -179,9 +179,11 @@
     }
   }
 
-  function renderPanel() {
+  function renderPanel(options = {}) {
     const root = ensureRoot();
     let panel = document.getElementById(PANEL_ID);
+    const previousBody = document.querySelector(`#${PANEL_ID} .bnr-panel__body`);
+    const previousScrollTop = options.preserveScroll && previousBody ? previousBody.scrollTop : null;
 
     if (!state.isOpen) {
       if (panel) panel.remove();
@@ -193,6 +195,7 @@
       panel.id = PANEL_ID;
       panel.className = "bnr-panel";
       panel.setAttribute("aria-label", "Needs Reply panel");
+      panel.addEventListener("click", (event) => event.stopPropagation());
       root.appendChild(panel);
     }
 
@@ -203,7 +206,7 @@
     body.className = "bnr-panel__body";
 
     if (state.isLoading) {
-      body.appendChild(renderMessage("Checking mentions…", "Looking for pings where you have not replied yet."));
+      body.appendChild(renderMessage("Checking mentions and assignments…", "Looking for pings or assigned work where you have not replied yet."));
     } else if (state.error) {
       body.appendChild(renderError(state.error));
     } else if (!state.items.length) {
@@ -214,6 +217,12 @@
 
     panel.appendChild(body);
     panel.appendChild(renderFooter());
+
+    if (previousScrollTop !== null) {
+      window.requestAnimationFrame(() => {
+        body.scrollTop = previousScrollTop;
+      });
+    }
   }
 
   function renderHeader() {
@@ -322,6 +331,9 @@
     if (state.meta && state.meta.fetchSource) {
       parts.push("same-origin fallback");
     }
+    if (state.meta && Array.isArray(state.meta.errors) && state.meta.errors.length) {
+      parts.push(`${state.meta.errors.length} checks failed`);
+    }
 
     footer.textContent = parts.join(" · ");
     return footer;
@@ -341,10 +353,10 @@
     const meta = document.createElement("div");
     meta.className = "bnr-item__meta";
     meta.textContent = `${item.projectName || "Basecamp"} · ${formatDate(item.mentionedAt)}`;
-    if (item.sourceType === "recording_mention") {
+    if (item.sourceType === "recording_mention" || item.sourceType === "assignment") {
       const source = document.createElement("span");
       source.className = "bnr-source-badge";
-      source.textContent = "Description mention";
+      source.textContent = item.sourceType === "assignment" ? "Assignment" : "Description mention";
       meta.append(" · ", source);
     }
     if (item.hiddenState) {
@@ -362,7 +374,10 @@
 
     const sender = document.createElement("p");
     sender.className = "bnr-item__sender";
-    sender.textContent = `Mentioned by ${item.sender && item.sender.name ? item.sender.name : "someone"}`;
+    const senderName = item.sender && item.sender.name ? item.sender.name : "someone";
+    sender.textContent = item.sourceType === "assignment"
+      ? "Assigned to you"
+      : `Mentioned by ${senderName}`;
 
     const excerpt = document.createElement("p");
     excerpt.className = "bnr-item__excerpt";
@@ -380,12 +395,16 @@
     const ignore = document.createElement("button");
     ignore.type = "button";
     ignore.className = "bnr-item__secondary";
-    ignore.textContent = "Ignore";
-    ignore.addEventListener("click", () => hideItem(item));
-
-    if (item.hiddenState) {
-      ignore.disabled = true;
-    }
+    ignore.textContent = item.hiddenState ? "Unignore" : "Ignore";
+    ignore.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (item.hiddenState) {
+        unhideItem(item);
+      } else {
+        hideItem(item);
+      }
+    });
 
     actions.append(open, ignore);
     article.append(meta, title, sender, excerpt, actions);
@@ -395,14 +414,28 @@
   async function hideItem(item) {
     state.items = state.items.filter((candidate) => candidate.threadId !== item.threadId);
     updateBadge();
-    renderPanel();
+    renderPanel({ preserveScroll: true });
 
     const response = await sendMessage({ type: "BNR_IGNORE_ITEM", item, showAll: state.showAll });
     if (response && response.ok && response.result) {
       state.items = response.result.items || [];
       state.meta = response.result.meta || state.meta;
       updateBadge();
-      renderPanel();
+      renderPanel({ preserveScroll: true });
+      return;
+    }
+
+    state.error = normalizeError(response && response.error);
+    renderPanel();
+  }
+
+  async function unhideItem(item) {
+    const response = await sendMessage({ type: "BNR_UNIGNORE_ITEM", item, showAll: state.showAll });
+    if (response && response.ok && response.result) {
+      state.items = response.result.items || [];
+      state.meta = response.result.meta || state.meta;
+      updateBadge();
+      renderPanel({ preserveScroll: true });
       return;
     }
 
@@ -422,7 +455,7 @@
   }
 
   function renderError(error) {
-    const box = renderMessage("Could not check mentions.", authHint(error));
+    const box = renderMessage("Could not check mentions or assignments.", authHint(error));
     box.classList.add("bnr-message--error");
     const detail = document.createElement("small");
     detail.textContent = error.message || String(error);
