@@ -3,7 +3,7 @@ importScripts("/src/shared/basecamp-engine.js");
 const STORAGE_KEY = "basecampNeedsReplySettings";
 const CACHE_KEY = "basecampNeedsReplyLastResult";
 const IGNORED_KEY = "basecampNeedsReplyIgnored";
-const CACHE_SCHEMA_VERSION = 3;
+const CACHE_SCHEMA_VERSION = 4;
 const CACHE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 
 chrome.runtime.onInstalled.addListener(async () => {

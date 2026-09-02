@@ -10,6 +10,9 @@
     origin: "https://app.basecamp.com"
   });
 
+  const COMMENT_PAGE_SIZE = 15;
+  const MAX_COMMENT_PAGES = 20;
+
   function normalizeSettings(settings) {
     const merged = Object.assign({}, DEFAULT_SETTINGS, settings || {});
     merged.accountId = String(merged.accountId || DEFAULT_SETTINGS.accountId).trim();
@@ -204,6 +207,23 @@
     return flattenAssignments(data);
   }
 
+  async function fetchRecordingComments({ accountId, origin, recordingId, fetchImpl }) {
+    const allComments = [];
+
+    for (let page = 1; page <= MAX_COMMENT_PAGES; page += 1) {
+      const data = await fetchJson(
+        makeUrl(origin, accountId, `/recordings/${recordingId}/comments.json?page=${page}`),
+        fetchImpl
+      );
+      const comments = normalizeThreadComments(data);
+      allComments.push(...comments);
+
+      if (comments.length === 0 || comments.length < COMMENT_PAGE_SIZE) break;
+    }
+
+    return uniqById(allComments);
+  }
+
   function flattenAssignments(data) {
     const result = [];
     const visit = (assignment) => {
@@ -384,10 +404,12 @@
     );
     if (!parentRecordingId) return null;
 
-    const threadComments = await fetchJson(
-      makeUrl(origin, accountId, `/recordings/${parentRecordingId}/comments.json`),
+    const threadComments = await fetchRecordingComments({
+      accountId,
+      origin,
+      recordingId: parentRecordingId,
       fetchImpl
-    );
+    });
 
     const focus = {
       id: focusComment.id || focusCommentId,
@@ -435,10 +457,12 @@
     if (!parentRecordingId) return null;
 
     const recording = await fetchJson(makeRecordingUrl(origin, parsed), fetchImpl);
-    const threadComments = await fetchJson(
-      makeUrl(origin, accountId, `/recordings/${parentRecordingId}/comments.json`),
+    const threadComments = await fetchRecordingComments({
+      accountId,
+      origin,
+      recordingId: parentRecordingId,
       fetchImpl
-    );
+    });
 
     const focus = {
       id: notification.id || recording.id || parentRecordingId,
@@ -494,10 +518,12 @@
     // those threads.
     if (getCommentCount(recording) > 0) return null;
 
-    const threadComments = await fetchJson(
-      makeUrl(origin, accountId, `/recordings/${assignmentRecordingId}/comments.json`),
+    const threadComments = await fetchRecordingComments({
+      accountId,
+      origin,
+      recordingId: assignmentRecordingId,
       fetchImpl
-    );
+    });
 
     const assignmentFocus = resolveAssignmentFocus(assignment, recording);
     const focus = {
