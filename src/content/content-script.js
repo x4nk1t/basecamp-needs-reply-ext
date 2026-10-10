@@ -6,6 +6,11 @@
   const BUTTON_ID = "bnr-tray-button";
   const PANEL_ID = "bnr-panel";
   const FALLBACK_CLASS = "bnr-fallback";
+  const STORAGE_KEY = "basecampNeedsReplySettings";
+  const CACHE_KEY = "basecampNeedsReplyLastResult";
+  const IGNORED_KEY = "basecampNeedsReplyIgnored";
+  // Matches AUTO_REFRESH_MIN_AGE_MS in the service worker.
+  const AUTO_REFRESH_MIN_AGE_MS = 2 * 60 * 1000;
 
   let state = {
     isOpen: false,
@@ -17,12 +22,19 @@
     showAll: false
   };
 
+  let refreshPromise = null;
+
   function start() {
     ensureRoot();
     injectEntryPoint();
-    loadSettings().then(loadCachedItems);
     observeBasecampNavigation();
     document.addEventListener("keydown", handleKeydown);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    chrome.storage.onChanged.addListener(handleStorageChange);
+
+    // Show the cached badge right away, then refresh in the background so the
+    // panel already has current data by the time it is opened.
+    Promise.all([loadSettings(), loadCachedItems()]).then(autoRefresh);
   }
 
   function ensureRoot() {
@@ -117,15 +129,21 @@
       state.items = response.result.items || [];
       state.meta = response.result.meta || null;
       updateBadge();
-      if (state.isOpen) renderPanel();
+      if (state.isOpen) renderPanel({ preserveScroll: true });
     }
   }
 
   async function togglePanel() {
     state.isOpen = !state.isOpen;
     renderPanel();
-    if (state.isOpen && !state.isLoading) {
+    if (!state.isOpen) return;
+
+    // Cached items are already rendered; only block on a fetch when nothing
+    // has been loaded yet. Otherwise refresh quietly if the data is stale.
+    if (!state.meta) {
       await getOrRefreshItems();
+    } else {
+      autoRefresh();
     }
   }
 
@@ -133,15 +151,38 @@
     return refreshItems("BNR_GET_OR_REFRESH");
   }
 
-  async function refreshItems(messageType = "BNR_REFRESH") {
+  function autoRefresh() {
+    if (refreshPromise || isCacheFresh() || !getCurrentAccountId()) return;
+    refreshItems("BNR_PREFETCH");
+  }
+
+  function isCacheFresh() {
+    const checkedAt = state.meta && state.meta.checkedAt;
+    const time = checkedAt ? new Date(checkedAt).getTime() : 0;
+    return Number.isFinite(time) && time > 0 && Date.now() - time < AUTO_REFRESH_MIN_AGE_MS;
+  }
+
+  // Concurrent callers in this tab (page-load prefetch, panel open, manual
+  // refresh) share a single in-flight refresh.
+  function refreshItems(messageType = "BNR_REFRESH") {
+    if (!refreshPromise) {
+      refreshPromise = runRefresh(messageType).finally(() => {
+        refreshPromise = null;
+      });
+    }
+    return refreshPromise;
+  }
+
+  async function runRefresh(messageType) {
     state.isLoading = true;
     state.error = null;
-    renderPanel();
+    renderPanel({ preserveScroll: true });
 
     const accountId = getCurrentAccountId();
     const origin = getCurrentBasecampOrigin();
+    const requestedShowAll = state.showAll;
 
-    let response = await sendMessage({ type: messageType, accountId, origin, showAll: state.showAll });
+    let response = await sendMessage({ type: messageType, accountId, origin, showAll: requestedShowAll });
 
     if (!response || !response.ok) {
       response = await refreshItemsFromContentScript(accountId, origin, response && response.error);
@@ -156,8 +197,14 @@
     }
 
     state.isLoading = false;
-    renderPanel();
+    renderPanel({ preserveScroll: true });
     updateBadge();
+
+    // The filter changed while this refresh was running; re-read the cache
+    // with the current filter.
+    if (response && response.ok && requestedShowAll !== state.showAll) {
+      await loadCachedItems();
+    }
   }
 
   async function refreshItemsFromContentScript(accountId, origin, backgroundError) {
@@ -173,7 +220,11 @@
         fetchSource: "content-script-same-origin",
         backgroundError
       };
-      return result;
+
+      // Cache the result (and apply ignores) through the service worker so the
+      // next panel open is instant; fall back to the raw result if that fails.
+      const stored = await sendMessage({ type: "BNR_STORE_RESULT", result, showAll: state.showAll });
+      return stored && stored.ok ? stored : result;
     } catch (error) {
       return { ok: false, error: normalizeError(error) };
     }
@@ -205,14 +256,17 @@
     const body = document.createElement("div");
     body.className = "bnr-panel__body";
 
-    if (state.isLoading) {
-      body.appendChild(renderMessage("Checking mentions and assignments…", "Looking for pings or assigned work where you have not replied yet."));
-    } else if (state.error) {
+    // Cached items stay visible while a refresh runs; the header button shows
+    // "Checking…" until fresh data arrives.
+    if (state.error) {
       body.appendChild(renderError(state.error));
-    } else if (!state.items.length) {
-      body.appendChild(renderMessage("No pending replies found.", "You're clear for the selected time window."));
-    } else {
+    }
+    if (state.items.length) {
       body.appendChild(renderList(state.items));
+    } else if (state.isLoading && !state.meta) {
+      body.appendChild(renderMessage("Checking mentions and assignments…", "Looking for pings or assigned work where you have not replied yet."));
+    } else if (!state.error) {
+      body.appendChild(renderMessage("No pending replies found.", "You're clear for the selected time window."));
     }
 
     panel.appendChild(body);
@@ -300,7 +354,14 @@
   async function setShowAll(showAll) {
     if (state.showAll === showAll) return;
     state.showAll = showAll;
-    await getOrRefreshItems();
+    renderPanel();
+    // Show all only changes local filtering, so re-read the cache instead of
+    // fetching from Basecamp.
+    if (state.meta) {
+      await loadCachedItems();
+    } else {
+      await getOrRefreshItems();
+    }
   }
 
   function createSvgIcon(pathData) {
@@ -531,6 +592,19 @@
     if (hours < 24) return `${hours}h ago`;
     const days = Math.round(hours / 24);
     return `${days}d ago`;
+  }
+
+  function handleStorageChange(changes, areaName) {
+    if (areaName !== "local") return;
+    if (changes[STORAGE_KEY]) loadSettings().then(() => {
+      if (state.isOpen) renderPanel({ preserveScroll: true });
+    });
+    // Another tab (or the service worker) refreshed or ignored something.
+    if (changes[CACHE_KEY] || changes[IGNORED_KEY]) loadCachedItems();
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState === "visible") autoRefresh();
   }
 
   function handleKeydown(event) {

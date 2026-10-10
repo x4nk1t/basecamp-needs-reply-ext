@@ -12,6 +12,8 @@
 
   const COMMENT_PAGE_SIZE = 15;
   const MAX_COMMENT_PAGES = 20;
+  const INSPECT_CONCURRENCY = 6;
+  const MAX_RATE_LIMIT_RETRIES = 2;
 
   function normalizeSettings(settings) {
     const merged = Object.assign({}, DEFAULT_SETTINGS, settings || {});
@@ -171,10 +173,15 @@
   }
 
   async function fetchJson(url, fetchImpl) {
-    const response = await fetchImpl(url, {
-      credentials: "include",
-      headers: { Accept: "application/json" }
-    });
+    let response;
+    for (let attempt = 0; ; attempt += 1) {
+      response = await fetchImpl(url, {
+        credentials: "include",
+        headers: { Accept: "application/json" }
+      });
+      if (response.status !== 429 || attempt >= MAX_RATE_LIMIT_RETRIES) break;
+      await delay(retryAfterMs(response));
+    }
 
     if (!response.ok) {
       const error = new Error(`Basecamp request failed (${response.status})`);
@@ -186,12 +193,61 @@
     return response.json();
   }
 
-  async function fetchReadings({ accountId, origin, maxReadPages, fetchImpl }) {
+  function retryAfterMs(response) {
+    const seconds = Number(response.headers && response.headers.get("Retry-After"));
+    if (!Number.isFinite(seconds) || seconds <= 0) return 2000;
+    return Math.min(seconds, 10) * 1000;
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Wraps fetchJson so each URL is requested at most once per run. Multiple
+  // mentions in one thread, or a mention plus an assignment on the same card,
+  // then share the same recording/comments requests.
+  function createJsonLoader(fetchImpl) {
+    const requests = new Map();
+    return function getJson(url) {
+      if (!requests.has(url)) requests.set(url, fetchJson(url, fetchImpl));
+      return requests.get(url);
+    };
+  }
+
+  // Marks a promise as handled so it can be started early and awaited later
+  // without an "uncaught rejection" if an earlier step fails first.
+  function startEarly(promise) {
+    promise.catch(() => {});
+    return promise;
+  }
+
+  async function mapWithConcurrency(items, limit, fn) {
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await fn(items[index], index);
+      }
+    };
+    const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+    await Promise.all(workers);
+    return results;
+  }
+
+  async function fetchReadings({ accountId, origin, maxReadPages, getJson }) {
     const groups = { unreads: [], reads: [] };
 
+    // Request every page up front, then consume them in order. Pages after the
+    // first empty one are ignored, matching the old sequential behavior.
+    const pages = [];
     for (let page = 1; page <= maxReadPages; page += 1) {
-      const url = makeUrl(origin, accountId, `/my/readings.json?page=${page}`);
-      const data = await fetchJson(url, fetchImpl);
+      pages.push(startEarly(getJson(makeUrl(origin, accountId, `/my/readings.json?page=${page}`))));
+    }
+
+    for (let page = 1; page <= maxReadPages; page += 1) {
+      const data = await pages[page - 1];
       if (page === 1) groups.unreads = Array.isArray(data.unreads) ? data.unreads : [];
       const reads = Array.isArray(data.reads) ? data.reads : [];
       groups.reads.push(...reads);
@@ -202,18 +258,17 @@
     return groups;
   }
 
-  async function fetchAssignments({ accountId, origin, fetchImpl }) {
-    const data = await fetchJson(makeUrl(origin, accountId, "/my/assignments.json"), fetchImpl);
+  async function fetchAssignments({ accountId, origin, getJson }) {
+    const data = await getJson(makeUrl(origin, accountId, "/my/assignments.json"));
     return flattenAssignments(data);
   }
 
-  async function fetchRecordingComments({ accountId, origin, recordingId, fetchImpl }) {
+  async function fetchRecordingComments({ accountId, origin, recordingId, getJson }) {
     const allComments = [];
 
     for (let page = 1; page <= MAX_COMMENT_PAGES; page += 1) {
-      const data = await fetchJson(
-        makeUrl(origin, accountId, `/recordings/${recordingId}/comments.json?page=${page}`),
-        fetchImpl
+      const data = await getJson(
+        makeUrl(origin, accountId, `/recordings/${recordingId}/comments.json?page=${page}`)
       );
       const comments = normalizeThreadComments(data);
       allComments.push(...comments);
@@ -245,9 +300,9 @@
     return uniqById(result);
   }
 
-  async function fetchCurrentUser({ accountId, origin, personIdFallback, fetchImpl }) {
+  async function fetchCurrentUser({ accountId, origin, personIdFallback, getJson }) {
     try {
-      const profile = await fetchJson(makeUrl(origin, accountId, "/my/profile.json"), fetchImpl);
+      const profile = await getJson(makeUrl(origin, accountId, "/my/profile.json"));
       return {
         id: String(profile.id || personIdFallback || ""),
         name: profile.name || "You",
@@ -284,25 +339,24 @@
   async function getNeedsReplyItems(settings, options) {
     const normalized = normalizeSettings(settings);
     const fetchImpl = (options && options.fetchImpl) || global.fetch.bind(global);
+    const getJson = createJsonLoader(fetchImpl);
     const cutoff = cutoffDate(normalized.daysBack);
-    const currentUser = await fetchCurrentUser({
-      accountId: normalized.accountId,
-      origin: normalized.origin,
-      personIdFallback: normalized.personId,
-      fetchImpl
-    });
+    const request = { accountId: normalized.accountId, origin: normalized.origin, getJson };
+
+    // Profile, notifications and assignments are independent, so request them
+    // together instead of one after another.
+    const currentUserPromise = fetchCurrentUser({ ...request, personIdFallback: normalized.personId });
+    const readingsPromise = startEarly(fetchReadings({ ...request, maxReadPages: normalized.maxReadPages }));
+    const assignmentsPromise = startEarly(fetchAssignments(request));
+
+    const currentUser = await currentUserPromise;
     const currentPersonId = String(currentUser.id || "");
 
     if (!currentPersonId) {
       throw new Error("Could not detect the logged-in Basecamp user. Please log into Basecamp or set a fallback person ID in the extension options.");
     }
 
-    const readings = await fetchReadings({
-      accountId: normalized.accountId,
-      origin: normalized.origin,
-      maxReadPages: normalized.maxReadPages,
-      fetchImpl
-    });
+    const readings = await readingsPromise;
 
     const notifications = uniqById([...(readings.unreads || []), ...(readings.reads || [])]);
     const mentionCandidates = notifications
@@ -315,11 +369,7 @@
     const errors = [];
     let assignmentCandidates = [];
     try {
-      const assignments = await fetchAssignments({
-        accountId: normalized.accountId,
-        origin: normalized.origin,
-        fetchImpl
-      });
+      const assignments = await assignmentsPromise;
       assignmentCandidates = assignments
         .filter((assignment) => isActiveAssignmentForCurrentUser(assignment, currentPersonId))
         .map((assignment) => ({ assignment, parsed: parseBasecampAppUrl(assignment.app_url) }))
@@ -333,36 +383,39 @@
       });
     }
 
+    const inspectSettings = { ...normalized, personId: currentPersonId, currentUser, cutoff };
+    const tasks = [
+      ...mentionCandidates.map((candidate) => ({ kind: "mention", candidate })),
+      ...assignmentCandidates.map((candidate) => ({ kind: "assignment", candidate }))
+    ];
+
+    // Inspect threads with bounded concurrency. Results keep their original
+    // order so dedupe tie-breaking and error ordering are unchanged.
+    const outcomes = await mapWithConcurrency(tasks, INSPECT_CONCURRENCY, async ({ kind, candidate }) => {
+      try {
+        const item = kind === "mention"
+          ? await inspectMention(candidate, inspectSettings, getJson)
+          : await inspectAssignment(candidate, inspectSettings, getJson);
+        return { item };
+      } catch (error) {
+        const details = kind === "mention"
+          ? { source: "mention", notificationId: candidate.notification && candidate.notification.id }
+          : { source: "assignment", assignmentId: candidate.assignment && candidate.assignment.id };
+        return {
+          error: {
+            ...details,
+            url: error && error.url,
+            status: error && error.status,
+            message: error && error.message ? error.message : String(error)
+          }
+        };
+      }
+    });
+
     const unresolved = [];
-
-    for (const candidate of mentionCandidates) {
-      try {
-        const item = await inspectMention(candidate, { ...normalized, personId: currentPersonId, currentUser }, fetchImpl);
-        if (item) unresolved.push(item);
-      } catch (error) {
-        errors.push({
-          source: "mention",
-          notificationId: candidate.notification && candidate.notification.id,
-          url: error && error.url,
-          status: error && error.status,
-          message: error && error.message ? error.message : String(error)
-        });
-      }
-    }
-
-    for (const candidate of assignmentCandidates) {
-      try {
-        const item = await inspectAssignment(candidate, { ...normalized, personId: currentPersonId, currentUser, cutoff }, fetchImpl);
-        if (item) unresolved.push(item);
-      } catch (error) {
-        errors.push({
-          source: "assignment",
-          assignmentId: candidate.assignment && candidate.assignment.id,
-          url: error && error.url,
-          status: error && error.status,
-          message: error && error.message ? error.message : String(error)
-        });
-      }
+    for (const outcome of outcomes) {
+      if (outcome.item) unresolved.push(outcome.item);
+      if (outcome.error) errors.push(outcome.error);
     }
 
     const deduped = dedupeByParentRecording(unresolved);
@@ -385,31 +438,36 @@
     };
   }
 
-  async function inspectMention(candidate, settings, fetchImpl) {
+  async function inspectMention(candidate, settings, getJson) {
     if (candidate.parsed.isCommentMention) {
-      return inspectCommentMention(candidate, settings, fetchImpl);
+      return inspectCommentMention(candidate, settings, getJson);
     }
-    return inspectRecordingMention(candidate, settings, fetchImpl);
+    return inspectRecordingMention(candidate, settings, getJson);
   }
 
-  async function inspectCommentMention(candidate, settings, fetchImpl) {
+  async function inspectCommentMention(candidate, settings, getJson) {
     const { notification, parsed } = candidate;
     const accountId = parsed.accountId || settings.accountId;
     const origin = settings.origin;
     const focusCommentId = parsed.focusCommentId;
 
-    const focusComment = await fetchJson(makeUrl(origin, accountId, `/comments/${focusCommentId}.json`), fetchImpl);
+    // The mention URL path almost always names the parent recording, so start
+    // loading that thread while the focused comment is fetched. If the comment
+    // reports a different parent, that thread is fetched instead.
+    const guessedParentId = String(parsed.parentRecordingId || "");
+    const guessedThread = guessedParentId
+      ? startEarly(fetchRecordingComments({ accountId, origin, recordingId: guessedParentId, getJson }))
+      : null;
+
+    const focusComment = await getJson(makeUrl(origin, accountId, `/comments/${focusCommentId}.json`));
     const parentRecordingId = String(
       (focusComment.parent && focusComment.parent.id) || parsed.parentRecordingId || ""
     );
     if (!parentRecordingId) return null;
 
-    const threadComments = await fetchRecordingComments({
-      accountId,
-      origin,
-      recordingId: parentRecordingId,
-      fetchImpl
-    });
+    const threadComments = parentRecordingId === guessedParentId
+      ? await guessedThread
+      : await fetchRecordingComments({ accountId, origin, recordingId: parentRecordingId, getJson });
 
     const focus = {
       id: focusComment.id || focusCommentId,
@@ -449,20 +507,17 @@
     };
   }
 
-  async function inspectRecordingMention(candidate, settings, fetchImpl) {
+  async function inspectRecordingMention(candidate, settings, getJson) {
     const { notification, parsed } = candidate;
     const accountId = parsed.accountId || settings.accountId;
     const origin = settings.origin;
     const parentRecordingId = String(parsed.parentRecordingId || "");
     if (!parentRecordingId) return null;
 
-    const recording = await fetchJson(makeRecordingUrl(origin, parsed), fetchImpl);
-    const threadComments = await fetchRecordingComments({
-      accountId,
-      origin,
-      recordingId: parentRecordingId,
-      fetchImpl
-    });
+    const [recording, threadComments] = await Promise.all([
+      getJson(makeRecordingUrl(origin, parsed)),
+      fetchRecordingComments({ accountId, origin, recordingId: parentRecordingId, getJson })
+    ]);
 
     const focus = {
       id: notification.id || recording.id || parentRecordingId,
@@ -504,26 +559,25 @@
     };
   }
 
-  async function inspectAssignment(candidate, settings, fetchImpl) {
+  async function inspectAssignment(candidate, settings, getJson) {
     const { assignment, parsed } = candidate;
     const accountId = parsed.accountId || settings.accountId;
     const origin = settings.origin;
     const assignmentRecordingId = getAssignmentRecordingId(assignment, parsed);
     if (!assignmentRecordingId) return null;
 
-    const recording = await fetchJson(makeRecordingUrl(origin, parsed), fetchImpl);
+    // When the assignment carries its own timestamp it decides the focus time
+    // (see resolveAssignmentFocus), so old assignments can be skipped without
+    // fetching anything.
+    const ownFocusAt = assignment.assigned_at || assignment.updated_at;
+    if (ownFocusAt && !isRecent(ownFocusAt, settings.cutoff)) return null;
+
+    const recording = await getJson(makeRecordingUrl(origin, parsed));
 
     // If Basecamp already says this assignment has comments, do not surface it
     // as a generic assignment reminder. Comment/mention-specific logic owns
     // those threads.
     if (getCommentCount(recording) > 0) return null;
-
-    const threadComments = await fetchRecordingComments({
-      accountId,
-      origin,
-      recordingId: assignmentRecordingId,
-      fetchImpl
-    });
 
     const assignmentFocus = resolveAssignmentFocus(assignment, recording);
     const focus = {
@@ -532,6 +586,13 @@
     };
 
     if (!isRecent(focus.created_at, settings.cutoff)) return null;
+
+    const threadComments = await fetchRecordingComments({
+      accountId,
+      origin,
+      recordingId: assignmentRecordingId,
+      getJson
+    });
 
     // Assignment items are only for tasks/cards with no discussion yet. Once a
     // thread has comments, mention/body-mention handling should decide whether
